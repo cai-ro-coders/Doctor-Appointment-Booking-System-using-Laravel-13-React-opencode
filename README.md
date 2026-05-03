@@ -1,0 +1,435 @@
+<img src="https://raw.githubusercontent.com/cai-ro-coders/Doctor-Appointment-Booking-System-using-Laravel-13-React-opencode/refs/heads/main/Doctor_Appointment_Booking_system_laravel_react_opencodethumbnail.jpg" alt="Cairocoders Ednalan">
+
+AI prompt  
+
+Doctor Appointment Booking System using Laravel 13 React | opencode
+
+A complete Laravel-based React with opencode Doctor Appointment Booking system 
+  Admin Panel
+    Role-based multi-dashboard system (Admin / Doctor / Patient)
+    CRUD for doctors, patients, specialties, locations, appointments
+    Search, filters
+    Manage global scheduling rules (slot length, buffer, max daily appointments, timezone)
+  Doctor Dashboard
+    View/manage appointments (approve/decline/reschedule)
+    Set date time calendar availability
+    calendar view (FullCalendar)
+  Patient Interface
+    Register/login, profile management
+    Search doctors by specialty/location, view profiles and available slots
+    Book/reschedule/cancel appointments, view history and upcoming bookings
+    Real-time availability checks and soft-hold during booking
+
+Create a Doctor Appointment Booking system – ERD (database schema)	
+users
+	id (PK, bigint, unsigned)
+	role (enum: admin, doctor, patient)
+	phone (string, nullable)
+	timezone (string, default UTC)
+	profile_data (json, nullable) — extra profile fields
+	email_verified_at (timestamp, nullable)
+	created_at, updated_at Relationships: doctors.user_id -> users.id (1:1), patients.user_id -> users.id (1:1)
+
+doctors
+	id (PK)
+	user_id (FK -> users.id, unique, indexed)
+	bio (text, nullable)
+	photo_url (string, nullable)
+	consultation_fee (decimal, nullable)
+	is_active (boolean)
+	created_at, updated_at Relationships: doctors <-> specialties (many-to-many), doctors <-> locations (many-to-many), doctors -> google_calendar_tokens (1:1), doctor_schedules -> doctors.id (1:M), appointments.doctor_id -> doctors.id (1:M)
+
+patients
+	id (PK)
+	user_id (FK -> users.id, unique, indexed)
+	dob (date, nullable)
+	gender (enum, nullable)
+	medical_notes (text, nullable)
+	created_at, updated_at Relationships: appointments.patient_id -> patients.id (1:M)
+
+Lookup / Many-to-Many
+
+specialties
+	id (PK)
+	name (string, unique)
+	description (text, nullable)
+	created_at, updated_at
+doctor_specialty (pivot)
+	id (PK)
+	doctor_id (FK -> doctors.id, indexed)
+	specialty_id (FK -> specialties.id, indexed)
+	created_at, updated_at Unique index: (doctor_id, specialty_id)
+locations
+	id (PK)
+	name (string)
+	address (string, nullable)
+	city, state, zip (strings, nullable)
+	latitude, longitude (decimal, nullable)
+	created_at, updated_at
+doctor_location (pivot)
+	id (PK)
+	doctor_id (FK -> doctors.id)
+	location_id (FK -> locations.id)
+	is_primary (boolean)
+	created_at, updated_at Unique index: (doctor_id, location_id)
+
+Scheduling
+
+doctor_schedules
+	id (PK)
+	doctor_id (FK -> doctors.id, indexed)
+	date_appointment
+	start_time (time) — local to doctor's timezone
+	end_time (time)	
+	location_id
+	is_active (boolean)
+	created_at, updated_at Relationships: schedule_exceptions -> doctor_schedule_id
+
+schedule_exceptions
+	id (PK)
+	doctor_schedule_id (FK -> doctor_schedules.id, nullable) — nullable for global doctor time-offs
+	doctor_id (FK -> doctors.id, indexed)
+	date (date) OR start_datetime, end_datetime (timestamps) — support full-day or range
+	type (enum: time_off, override, extra_slot)
+	reason (string, nullable)
+	created_at, updated_at
+
+Appointments & Booking
+
+appointments
+	id (PK)
+	uuid (uuid, unique)
+	doctor_id (FK -> doctors.id, indexed)
+	patient_id (FK -> patients.id, indexed)
+	location_id (FK -> locations.id, nullable)
+	scheduled_start (datetime, indexed) — stored in UTC
+	scheduled_end (datetime)
+	slot_length_minutes (smallint)
+	status (enum: tentative, pending, confirmed, cancelled, completed, no_show)
+	booking_source (enum: web, mobile, admin, api)
+	cancellation_reason (text, nullable)
+	is_reminder_sent (boolean)
+	created_by (FK -> users.id, nullable) — who created/approved
+	created_at, updated_at, cancelled_at Indexes: (doctor_id, scheduled_start), (patient_id, scheduled_start) Constraints: prevent overlapping confirmed/confirmed+pending per doctor (enforced in code + DB unique partial index suggestions)
+
+appointment_logs (audit)
+	id (PK)
+	appointment_id (FK -> appointments.id)
+	actor_id (FK -> users.id, nullable)
+	action (string) e.g., created, updated, cancelled, status_changed
+	payload (json, nullable)
+	created_at
+
+Integrations & Notifications
+
+google_calendar_tokens
+	id (PK)
+	doctor_id (FK -> doctors.id, unique)
+	provider_user_id (string)
+	access_token (text, encrypted)
+	refresh_token (text, encrypted)
+	scopes (string)
+	token_expires_at (timestamp)
+	sync_enabled (boolean)
+	last_synced_at (timestamp, nullable)
+	created_at, updated_at
+
+email_notifications (queued tracking)
+	id (PK)
+	job_id (string, nullable)
+	mailable_class (string)
+	to_email (string)
+	payload (json)
+	status (enum: queued, sent, failed)
+	attempts (int)
+	last_attempt_at (timestamp, nullable)
+	created_at, updated_at
+
+Settings & Audit
+
+settings
+	id (PK)
+	key (string, unique)
+	value (text/json)
+	created_at, updated_at	
+
+audit_logs
+	id (PK)
+	actor_id (FK -> users.id)
+	action (string)
+	auditable_type (string)
+	auditable_id (bigint)
+	old_values (json, nullable)
+	new_values (json, nullable)
+	ip_address (string, nullable)
+	user_agent (string, nullable)
+	created_at
+
+Create a dashboard page (Admin / Doctor / Patient) a role-based multi-dashboard RoleMiddleware with ProtectedRoute
+    Route::middleware('role:admin')->get('/admin/dashboard', function () {
+        return 'Admin Dashboard';
+    });
+
+    Route::middleware('role:doctor')->get('/doctor/dashboard', function () {
+        return 'Doctor Dashboard';
+    });
+
+    Route::middleware('role:patient')->get('/patient/dashboard', function () {
+        return 'Patient Dashboard';
+    });
+
+fix login if admin user login the admin user redirect to this url http://127.0.0.1:8000/admin/dashboard
+if doctor login redirect to dashboad page http://127.0.0.1:8000/doctor/dashboard
+if patient redirect to dashboad page http://127.0.0.1:8000/patient/dashboard 
+
+generate realistic and structured dummy data
+General Requirements:
+	Use seeders and factories
+	Maintain data integrity and relationships (foreign keys)
+	Use realistic names, emails, dates, and values
+	Ensure variation in statuses and roles
+	Avoid duplicate unique fields (emails, employee_id)
+	Seed at least 50–100 patients for meaningful data
+Seeding (appointments,appointment_logs,doctors,doctor_location,doctor_schedules,doctor_specialty,specialties,schedule_exceptions)   
+
+Create Dashboard Page for dashboad admin http://127.0.0.1:8000/admin/dashboard 
+- Display real-time statistics:
+- Total Doctors
+- Total Patients
+- total of Appointments
+- total Users
+- Current appointments in table
+-Use charts (Chart.js) for dashboard stats
+
+Create Dashboard Page for dashboad doctor http://127.0.0.1:8000/doctor/dashboard 
+- Display real-time statistics:
+- Total Patients
+- Today Patient
+- Today Appointments
+- schedule calendar
+- Current appointments in table
+-Use charts (Chart.js) for dashboard stats
+
+Create Users Management Page this is for admin role
+- View all Users (paginated, searchable)
+- Add Users
+- Edit Users details
+- Delete Users
+
+Create appointments Management Page this is for admin role
+- View all appointments (paginated, searchable)
+- Add appointments
+- Edit appointments details
+- Delete appointments
+
+Create patients Management Page this is for admin role
+- View all patients (paginated, searchable)
+- Add patients
+- Edit patients details
+- Delete patients
+
+Create doctors Management Page this is for admin role
+- View all doctors (paginated, searchable)
+- Add doctors
+- Edit doctors details
+- Delete doctors
+
+Create doctors schedules Management Page this is for admin role
+- View all doctors schedules (paginated, searchable)
+- Add doctors schedules
+- Edit doctors schedules details
+- Delete doctors schedules
+
+Create doctors specialties Management Page this is for admin role
+- View all doctors specialties (paginated, searchable)
+- Add doctors specialties
+- Edit doctors specialties details
+- Delete doctors specialties
+
+Create doctors locations Management Page this is for admin role
+- View all doctors locations (paginated, searchable)
+- Add doctors locations
+- Edit doctors locations details
+- Delete doctors locations
+
+Create locations Clinic Management Page locations table this is for admin role
+- View all locations Clinic (paginated, searchable)
+- Add locations Clinic
+- Edit locations details Clinic
+- Delete locations Clinic
+
+Create doctors Appointments Management Page this is for doctor role
+- View all doctors Appointments (paginated, searchable)
+- Add doctors Appointments
+- Edit doctors Appointments details
+- Delete doctors Appointments
+
+Create doctors schedules Management Page this is for doctor role
+- View all doctors schedules (paginated, searchable)
+- Add doctors schedules
+- Edit doctors schedules details
+- Delete doctors schedules
+
+Create doctors Profile Page this is for doctor role
+- Edit profile 
+- add specialties to profile
+- fields name, email, phone, photo_url, profile_data, bio,
+
+Create locations Clinic Management Page locations table this is for doctor role
+- View all locations Clinic (paginated, searchable)
+- Add locations Clinic
+- Edit locations details Clinic
+- Delete locations Clinic
+
+Create Dashboard Page for Patient http://127.0.0.1:8000/patient/dashboard 
+- welcome back name of user patient
+- Total Available Doctor
+- choose the category from specialties table
+- my appointments in table
+- Choose the doctor in table with photo. 
+-Use charts (Chart.js) for dashboard stats
+
+Create Appointments Management Page this is for patient role
+- View all Appointments (paginated, searchable)
+- Add Appointments
+- Edit Appointments details
+- Delete Appointments
+
+Create Available Doctors Management Page this is for patient role
+- View all Available Doctors (paginated, searchable, box with photo)
+- add Filter by Specialty like on the dashboad page 
+- View doctors profile in another page doctor profle page 
+
+COMPLETE WEBSITE DESIGN PROMPT
+Create a front-page Single Page APP modern healthcare/doctor appointment booking website with:
+Clean, minimal, and professional medical UI
+Highly responsive layout (mobile)
+
+🎨 1. DESIGN SYSTEM
+Color System
+Use a medical-trust color palette:
+Primary: #0DE0FE (bright cyan/blue)
+Secondary: #09E5AB (green for success/health)
+Accent: #FF9B44 (for highlights / CTA)
+Background: #F8F9FA (light grey)
+Text:
+Dark: #272B41
+Muted: #6B7280
+👉 Style rules:
+Use gradients for hero (blue → teal)
+Buttons: rounded (8px–12px radius)
+Cards: soft shadow + white background
+
+Typography
+Headings: Poppins / Inter
+Body: Roboto / Open Sans
+Font weights:
+Bold (600–700): headings
+Regular (400): body
+
+✨ 2. ANIMATION SYSTEM
+Use subtle, smooth animations:
+Scroll animations (AOS or Framer Motion)
+Hover effects:
+Cards lift (translateY(-5px))
+Buttons glow or scale (1.03)
+Page transitions: fade + slide
+Counters (stats section)
+Skeleton loaders for async data
+
+🏠 3. HERO SECTION
+Layout:
+Left: Text content
+Right: Doctor/medical illustration or image
+Content:
+Heading:“Consult Best Doctors Your Nearby Location.”
+Subtext:“Embark on your healing journey with Doccare, where finding trusted doctors, booking appointments, and managing your health”
+Elements:
+CTA buttons:
+“Book an Appointment”
+Visual:
+Doctor image / hospital illustration
+Floating UI cards (appointment preview, doctor rating)
+
+🏥 4. ABOUT US SECTION
+Layout:
+Left: Image (hospital / doctors team)
+Right: Text
+Content:
+Title: “About Our Healthcare Platform”
+Text:“We connect patients with trusted healthcare professionals through a seamless digital experience. Our mission is to make healthcare accessible, efficient, and reliable for everyone.”
+Add:
+Bullet points:
+Verified doctors
+Easy booking system
+24/7 support
+Stats:
+10k+ Patients
+500+ Doctors
+50+ Clinics
+
+🩺 5. SPECIALTIES SECTION
+Grid layout (cards)
+Each card:
+Icon/image
+Specialty name
+Short description
+Example:
+Cardiology
+Neurology
+Pediatrics
+Dental Care
+Orthopedics
+👉 Hover:
+Highlight border
+Slight zoom
+
+👨‍⚕️ 6. OUR TEAM (DOCTORS)
+Layout:
+Grid of doctor cards
+Card Includes:
+Doctor image
+Name
+Specialty
+Rating ⭐
+Experience
+“View Profile” button
+👉 Extra:
+Filter by specialty
+Online/offline badge
+
+⚙️ 7. HOW IT WORKS
+Step-based UI (horizontal or vertical)
+Steps:
+🔍 Search Doctor“Find specialists by name, location, or category”
+👨‍⚕️ Check Profile“View experience, ratings, and availability”
+📅 Schedule Booking“Choose date & time instantly”
+💊 Get Your Solution“Consult and receive treatment”
+👉 Add icons + connecting lines
+
+💬 8. CLIENT REVIEWS / TESTIMONIALS
+Layout:
+Carousel slider
+Card:
+User image
+Name
+Review text
+Star rating
+Example text:
+“Very easy to book appointments and the doctors are highly professional.”
+👉 Auto-slide + manual controls
+
+📞 9. FOOTER SECTION
+Columns:
+Logo + description
+Quick Links
+Services
+Contact Info
+Include:
+Email
+Phone
+Address
+Social media icons
+Bottom bar:
+Copyright
+Terms & Privacy
